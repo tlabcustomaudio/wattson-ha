@@ -1216,12 +1216,12 @@ def run(dry, cfg=None):
             if w is not None and idle.get(name) is not None and w >= idle[name] * 1.3 + PLUG_ON_W:
                 on_w[name] = w if on_w.get(name) is None else on_w[name] + (w - on_w[name]) * 0.02   # consumo da acceso
             if done:
-                p = prog_learn(progs.setdefault(name, []), done)
+                pr = prog_learn(progs.setdefault(name, []), done)
                 jsave("programs.json", progs)
                 prog_opts = None
-                if p["name"] is None:     # da nominare: il menu Programma lo selezionerà da solo
-                    st["prog_ask"] = {"plug": name, "id": p["id"]}
-                ha.notify(run_msg(name, p, done, cfg["price_eur_kwh"]))
+                if pr["name"] is None:     # da nominare: il menu Programma lo selezionerà da solo
+                    st["prog_ask"] = {"plug": name, "id": pr["id"]}
+                ha.notify(run_msg(name, pr, done, cfg["price_eur_kwh"]))
         if now - runs_saved > 60:
             jsave("state.json", st)        # un ciclo in corso sopravvive a un riavvio
             runs_saved = now

@@ -52,7 +52,12 @@ def _main(cfg: dict) -> None:
         W.dashboard(cfg, False)     # first time: dashboard + helpers; then only the logo and new views
     except BaseException as e:      # dashboard() exits on errors (it was a CLI command)
         _LOGGER.warning("Wattson dashboard not updated: %s", e)
-    W.run(False, cfg)
+    while not W.STOP.is_set():      # a bug in one cycle must not freeze Wattson until the next HA restart
+        try:
+            W.run(False, cfg)
+        except Exception:
+            _LOGGER.exception("Wattson crashed, restarting in 60 s")
+            W.STOP.wait(60)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
