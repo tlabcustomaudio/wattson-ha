@@ -1,0 +1,81 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Wattson",
+        "description": "Wattson watches your main power meter, tells you when a heavy load would trip it, and learns your appliances by themselves.",
+        "data": {
+          "power_entity": "Main power meter",
+          "limit_kw": "Contract power (kW)",
+          "price_eur_kwh": "Price per kWh, all included",
+          "notify_entity": "Notifications",
+          "catalog_share": "Share with the public catalog"
+        },
+        "data_description": {
+          "power_entity": "The sensor that measures the whole house. The biggest one is proposed.",
+          "limit_kw": "The power in your contract: 3, 4.5, 6 kW, or type yours.",
+          "price_eur_kwh": "From your bill. Used for € in summaries.",
+          "notify_entity": "Where Wattson writes to you (e.g. Telegram or the mobile app). Empty = no messages.",
+          "catalog_share": "Appliances you measure with a plug (type, brand, model, power; nothing about your home) go to the shared catalog on GitHub, so other homes recognise them. Needs a free GitHub account."
+        }
+      },
+      "github": {
+        "title": "Link GitHub",
+        "description": "Open {url}, sign in and type the code **{code}**. Then come back here and press Submit."
+      }
+    },
+    "error": {
+      "bad_limit": "Type a number, e.g. 3 or 4.5.",
+      "gh_pending": "GitHub hasn't received the code yet: type it at the link, then press Submit again.",
+      "gh_expired": "The code expired or was refused: here is a new one.",
+      "gh_offline": "GitHub can't be reached right now. Try again later, or turn sharing off for now."
+    },
+    "abort": {
+      "single_instance_allowed": "Wattson is already set up."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Wattson",
+        "description": "Wattson watches your main power meter, tells you when a heavy load would trip it, and learns your appliances by themselves.",
+        "data": {
+          "power_entity": "Main power meter",
+          "limit_kw": "Contract power (kW)",
+          "price_eur_kwh": "Price per kWh, all included",
+          "notify_entity": "Notifications",
+          "catalog_share": "Share with the public catalog"
+        },
+        "data_description": {
+          "power_entity": "The sensor that measures the whole house. The biggest one is proposed.",
+          "limit_kw": "The power in your contract: 3, 4.5, 6 kW, or type yours.",
+          "price_eur_kwh": "From your bill. Used for € in summaries.",
+          "notify_entity": "Where Wattson writes to you (e.g. Telegram or the mobile app). Empty = no messages.",
+          "catalog_share": "Appliances you measure with a plug (type, brand, model, power; nothing about your home) go to the shared catalog on GitHub, so other homes recognise them. Needs a free GitHub account."
+        }
+      },
+      "github": {
+        "title": "Link GitHub",
+        "description": "Open {url}, sign in and type the code **{code}**. Then come back here and press Submit."
+      }
+    },
+    "error": {
+      "bad_limit": "Type a number, e.g. 3 or 4.5.",
+      "gh_pending": "GitHub hasn't received the code yet: type it at the link, then press Submit again.",
+      "gh_expired": "The code expired or was refused: here is a new one.",
+      "gh_offline": "GitHub can't be reached right now. Try again later, or turn sharing off for now."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "semaforo": {
+        "name": "Traffic light",
+        "state": {
+          "go": "Go",
+          "wait": "Wait",
+          "stop": "Switch something off"
+        }
+      }
+    }
+  }
+}

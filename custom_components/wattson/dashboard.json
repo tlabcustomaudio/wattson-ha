@@ -1,0 +1,374 @@
+{
+ "title": "Wattson",
+ "views": [
+  {
+   "title": "Adesso",
+   "path": "adesso",
+   "icon": "mdi:magnify",
+   "cards": [
+    {
+     "type": "markdown",
+     "content": "{% set s = states('sensor.wattson_semaforo') %}\n## {{ {'go':'🟢 Via libera','wait':'🟡 Aspetta','stop':'🔴 Spegni qualcosa'}.get(s, '⚪ Wattson non risponde') }}\n{{ state_attr('sensor.wattson_semaforo','consiglio') or '' }}\n{% set su = state_attr('sensor.wattson_semaforo','sole') %}{% if su %}\n**{{ su.consiglio }}**\n{% endif %}{% set a = state_attr('sensor.wattson_semaforo','accesi') or [] %}\n{% if a %}\n**Acceso adesso**\n{% for x in a %}- {{ x.cosa }}: {{ x.kw }} kW dalle {{ x.da }}\n{% endfor %}{% endif %}"
+    },
+    {
+     "type": "gauge",
+     "entity": "{power}",
+     "name": "Potenza adesso",
+     "min": 0,
+     "max": "{max}",
+     "needle": true,
+     "severity": {
+      "green": 0,
+      "yellow": "{yellow}",
+      "red": "{red}"
+     }
+    },
+    {
+     "type": "markdown",
+     "title": "Dove va la corrente",
+     "content": "{% set m = state_attr('sensor.wattson_semaforo','misurati') or [] %}{% for x in m if not x.dentro %}- {{ x.nome }}: **{{ x.w }} W**{% if x.stanza %} · {{ x.stanza }}{% endif %}{% if x.resto_w is number %} (senza presa: {{ x.resto_w }} W){% endif %}\n{% for y in m if y.dentro == x.nome %}    - {{ y.nome }}: **{{ y.w }} W**{% if y.resto_w is number %} (senza presa: {{ y.resto_w }} W){% endif %}\n{% for z in m if z.dentro == y.nome %}        - {{ z.nome }}: **{{ z.w }} W**\n{% endfor %}{% endfor %}{% endfor %}- Non misurato: **{{ state_attr('sensor.wattson_semaforo','non_misurato_w') }} W**\n\n<sub>Ogni presa o misuratore che aggiungi in HA entra qui da solo, entro un'ora. Una presa dentro una linea conta una volta sola: indicala in Impara → 📍 Dove sta.</sub>"
+    },
+    {
+     "type": "markdown",
+     "title": "Dispositivi osservati",
+     "content": "{% set o = state_attr('sensor.wattson_semaforo','osservati') or [] %}\n{% set pr = state_attr('sensor.wattson_semaforo','profili') or {} %}\n{% for x in o %}- {{ x.nome }}: **{{ x.stato }}**\n{% endfor %}\n{% if pr %}**Profili misurati** (consumo sopra il bianco)\n{% for d, st in pr.items() %}- {{ d }}: {% for k, v in st.items() %}{{ k }} {{ v }} W{{ ', ' if not loop.last }}{% endfor %}\n{% endfor %}{% else %}<sub>Nessun profilo ancora: si misurano con la modalità apprendimento.</sub>{% endif %}"
+    },
+    {
+     "type": "history-graph",
+     "title": "Ultime 24 ore",
+     "hours_to_show": 24,
+     "entities": [
+      {
+       "entity": "{power}",
+       "name": "Generale"
+      }
+     ]
+    },
+    {
+     "type": "markdown",
+     "title": "Cosa ha imparato",
+     "content": "{% set b = state_attr('sensor.wattson_semaforo','carico_base_w') %}\n**Carico di base notturno:** {{ (b ~ ' W') if b else 'in misura, serve una notte (02–05)' }}\n\n{% set f = state_attr('sensor.wattson_semaforo','impronte') or [] %}\n{% if f %}**Impronte imparate**\n{% for x in f %}- **{{ x.nome or ('senza nome · ' ~ x.id) }}**: +{{ x.kw }} kW per {{ x.min }} min, vista {{ x.n }} volte\n{% endfor %}<sub>Senza nome? Daglielo in *Impara*.</sub>{% else %}Nessuna impronta ancora: Wattson impara i carichi sopra 0,3 kW man mano che li vede accendersi e spegnersi.{% endif %}"
+    }
+   ]
+  },
+  {
+   "title": "Impara",
+   "path": "impara",
+   "icon": "mdi:school",
+   "type": "sections",
+   "max_columns": 3,
+   "sections": [
+    {
+     "type": "grid",
+     "cards": [
+      {
+       "type": "heading",
+       "heading": "① Presa Profiler",
+       "heading_style": "title"
+      },
+      {
+       "type": "markdown",
+       "content": "**Il più comodo:** non spegni niente.\n\n*Prima volta:* collega una smart plug con misura e **rinominala `Profiler`** in HA.\n\n1. Compila la scheda qui sotto (tutto obbligatorio).\n2. Premi **Inizia profilo**, attacca l'apparecchio alla Profiler e accendilo.\n3. Lascia finire il ciclo, poi **Fine profilo** (o stacca la presa)."
+      },
+      {
+       "type": "entities",
+       "show_header_toggle": false,
+       "entities": [
+        {
+         "entity": "input_text.wattson_apparecchio",
+         "name": "Nome device (privato, non si condivide)"
+        },
+        {
+         "type": "section",
+         "label": "Per il catalogo condiviso"
+        },
+        {
+         "entity": "input_select.wattson_tipo",
+         "name": "Tipo"
+        },
+        {
+         "entity": "input_text.wattson_marca",
+         "name": "Marca (es. Acme)"
+        },
+        {
+         "entity": "input_text.wattson_modello",
+         "name": "Modello (es. AirDry 12)"
+        },
+        {
+         "entity": "input_text.wattson_codice_prodotto",
+         "name": "Codice prodotto (es. AD-1200)"
+        },
+        {
+         "entity": "input_text.wattson_stato",
+         "name": "Profilo (es. Laundry Dry)"
+        },
+        {
+         "type": "section",
+         "label": "Sessione"
+        },
+        {
+         "entity": "input_button.wattson_inizia_profilo",
+         "name": "Inizia profilo"
+        },
+        {
+         "entity": "input_button.wattson_fine_profilo",
+         "name": "Fine profilo"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "type": "grid",
+     "cards": [
+      {
+       "type": "heading",
+       "heading": "② Prese fisse e programmi",
+       "heading_style": "title"
+      },
+      {
+       "type": "markdown",
+       "content": "Per una presa con misura **sempre sullo stesso apparecchio** (lavastoviglie, lavatrice, stampante). I programmi li divide Wattson da solo.\n\n1. Scegli la **Presa**: i campi si riempiono.\n2. Compila i dati (una volta sola).\n3. Scegli il **Programma** e scrivi il suo nome nel **Profilo**.\n4. **Salva dati presa**.\n\n<sub>Tipo, Marca, Modello, Codice e Profilo sono gli stessi campi della colonna ①: cambiano insieme. Scegliendo una presa si riempiono con i suoi dati.</sub>"
+      },
+      {
+       "type": "entities",
+       "show_header_toggle": false,
+       "entities": [
+        {
+         "entity": "input_select.wattson_presa",
+         "name": "Presa"
+        },
+        {
+         "entity": "input_select.wattson_tipo",
+         "name": "Tipo"
+        },
+        {
+         "entity": "input_text.wattson_marca",
+         "name": "Marca (es. Acme)"
+        },
+        {
+         "entity": "input_text.wattson_modello",
+         "name": "Modello (es. AirDry 12)"
+        },
+        {
+         "entity": "input_text.wattson_codice_prodotto",
+         "name": "Codice prodotto (es. AD-1200)"
+        },
+        {
+         "type": "section",
+         "label": "Programma"
+        },
+        {
+         "entity": "input_select.wattson_programma",
+         "name": "Programma"
+        },
+        {
+         "entity": "input_text.wattson_stato",
+         "name": "Profilo = nome del programma (es. Eco 50°)"
+        },
+        {
+         "entity": "input_button.wattson_salva_presa",
+         "name": "Salva dati presa"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "type": "grid",
+     "cards": [
+      {
+       "type": "heading",
+       "heading": "③ Dai un nome",
+       "heading_style": "title"
+      },
+      {
+       "type": "markdown",
+       "content": "Per un'impronta che Wattson ha trovato da solo (le senza nome sono in cima), o per un programma/stato di una presa fissa — stesso menu, elencati tutti insieme, come in **Catalogo → I miei profili**. Scegliendo una voce i campi si riempiono con i suoi dati, da correggere.\n\n**Impronta**: Nome device sempre modificabile; Tipo/Marca/Modello/Codice/Profilo solo se già misurata da una presa (altrimenti resta **da verificare**). **Programma/stato di una presa fissa**: il nome va nel campo Profilo (Nome device non c'entra); Tipo/Marca/Modello/Codice valgono per tutti i suoi programmi."
+      },
+      {
+       "type": "entities",
+       "show_header_toggle": false,
+       "entities": [
+        {
+         "entity": "input_select.wattson_impronta",
+         "name": "Profilo (impronta o programma)"
+        },
+        {
+         "entity": "input_text.wattson_apparecchio",
+         "name": "Nome device"
+        },
+        {
+         "type": "section",
+         "label": "Dati del catalogo (solo se già misurata)"
+        },
+        {
+         "entity": "input_select.wattson_tipo",
+         "name": "Tipo"
+        },
+        {
+         "entity": "input_text.wattson_marca",
+         "name": "Marca"
+        },
+        {
+         "entity": "input_text.wattson_modello",
+         "name": "Modello"
+        },
+        {
+         "entity": "input_text.wattson_codice_prodotto",
+         "name": "Codice prodotto"
+        },
+        {
+         "entity": "input_text.wattson_stato",
+         "name": "Profilo"
+        },
+        {
+         "entity": "input_button.wattson_dai_nome",
+         "name": "Modifica profilo"
+        }
+       ]
+      },
+      {
+       "type": "heading",
+       "heading": "④ A mano (senza prese)",
+       "heading_style": "title"
+      },
+      {
+       "type": "markdown",
+       "content": "Solo se non hai una presa con misura. Spegni tutto, premi **Misura bianco** (2 min). Poi scrivi il nome, accendi l'apparecchio e premi **Segna impronta** (1 min)."
+      },
+      {
+       "type": "entities",
+       "show_header_toggle": false,
+       "entities": [
+        {
+         "entity": "input_text.wattson_apparecchio",
+         "name": "Nome device"
+        },
+        {
+         "entity": "input_text.wattson_stato",
+         "name": "Stato (facoltativo, es. riscaldamento)"
+        },
+        {
+         "entity": "input_button.wattson_misura_bianco",
+         "name": "Misura bianco"
+        },
+        {
+         "entity": "input_button.wattson_segna_impronta",
+         "name": "Segna impronta"
+        }
+       ]
+      },
+      {
+       "type": "markdown",
+       "content": "{% set b = state_attr('sensor.wattson_semaforo','bianco_w') %}{% set pr = state_attr('sensor.wattson_semaforo','profili') or {} %}**Bianco:** {{ (b ~ ' W') if b else 'non misurato' }}\n\n**Profili misurati**\n{% for d, st in pr.items() %}- {{ d }}: {% for k, v in st.items() %}{{ k }} {{ v }} W{{ ', ' if not loop.last }}{% endfor %}\n{% else %}- nessuno ancora\n{% endfor %}"
+      }
+     ]
+    },
+    {
+     "type": "grid",
+     "cards": [
+      {
+       "type": "heading",
+       "heading": "📍 Dove sta",
+       "heading_style": "title"
+      },
+      {
+       "type": "markdown",
+       "content": "Di' a Wattson **in che stanza** sta ogni presa o apparecchio, e **dentro quale linea** passa (per esempio una presa sulla linea Cucina di un misuratore a più canali). Le stanze sono le aree di Home Assistant.\n\n- **Stanza**: con gli apparecchi dalla stessa potenza, Wattson usa i sensori di quella stanza (umidità, temperatura, luci…) per capire quale si è acceso. Le prese la prendono da sole dal dispositivo in HA.\n- **Linea**: una presa dentro una linea misurata **non viene contata due volte**. Se l'hai già indicata in HA (Energia → dispositivo a monte), Wattson la legge da lì.\n\nScegli cosa, correggi stanza e linea, premi **Salva dove sta**. Resta tutto in casa tua: non va mai nel catalogo condiviso."
+      },
+      {
+       "type": "entities",
+       "show_header_toggle": false,
+       "entities": [
+        {
+         "entity": "input_select.wattson_dove_cosa",
+         "name": "Cosa"
+        },
+        {
+         "entity": "input_select.wattson_stanza",
+         "name": "Stanza"
+        },
+        {
+         "entity": "input_select.wattson_linea",
+         "name": "Dentro la linea"
+        },
+        {
+         "entity": "input_button.wattson_salva_dove",
+         "name": "Salva dove sta"
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "header": {
+    "layout": "center",
+    "card": {
+     "type": "markdown",
+     "content": "{% set m = state_attr('sensor.wattson_semaforo','apprendimento') %}{% set p = state_attr('sensor.wattson_semaforo','profilo_in_corso') %}{% if p %}## ⏺ Profilo in corso: {{ p.nome }} (dalle {{ p.da }})\n{% endif %}{% if m %}**Ultimo esito:** {{ m }}\n\n{% endif %}Wattson impara **anche da solo**. Qui lo aiuti a fare prima e meglio: scegli **uno** dei modi qui sotto, da sinistra a destra dal più comodo. Guida passo passo con esempi: [manuale](https://github.com/tlabcustomaudio/wattson-ha/blob/main/MANUAL.md).",
+     "text_only": true
+    }
+   }
+  },
+  {
+   "title": "Catalogo",
+   "path": "catalogo",
+   "icon": "mdi:book-open-variant",
+   "cards": [
+    {
+     "type": "markdown",
+     "title": "I miei profili",
+     "content": "{% set pp = state_attr('sensor.wattson_semaforo','profili_personali') or [] %}Tutto quello che Wattson ha generato, misurato o ricostruito su questa casa: impronte sul contatore generale e programmi/stati delle prese fisse. Per correggere nome o dati del catalogo di un'impronta, scegli dal menu Impronta in **Impara → ③ Dai un nome**; per un programma di una presa fissa, in **Impara → ② Prese fisse e programmi**.\n\n{% if pp %}| Nome | Stanza | Fonte | Gradino/Consumo | kWh | min | volte |\n|---|---|---|---:|---:|---:|---:|\n{% for e in pp %}| {{ e.nome or 'senza nome (' ~ e.id ~ ')' }} | {{ e.stanza or '—' }} | {{ e.fonte }} | {{ (e.kw ~ ' kW') if e.kw else ((e.avg_w ~ ' W') if e.avg_w else '—') }} | {{ e.kwh or '—' }} | {{ (e.min | round(0) | int) if e.min else '—' }} | {{ e.n if e.n is not none else '—' }} |\n{% endfor %}{% else %}Ancora nessun profilo: impara da solo osservando i cicli, oppure usa la presa Profiler.{% endif %}"
+    },
+    {
+     "type": "entities",
+     "title": "Modifica un profilo",
+     "entities": [
+      {
+       "entity": "input_select.wattson_impronta",
+       "name": "Profilo (impronta o programma)"
+      },
+      {
+       "entity": "input_text.wattson_apparecchio",
+       "name": "Nome device (solo per un'impronta)"
+      },
+      {
+       "type": "section",
+       "label": "Tipo/Marca/Modello/Codice/Profilo"
+      },
+      {
+       "entity": "input_select.wattson_tipo",
+       "name": "Tipo"
+      },
+      {
+       "entity": "input_text.wattson_marca",
+       "name": "Marca"
+      },
+      {
+       "entity": "input_text.wattson_modello",
+       "name": "Modello"
+      },
+      {
+       "entity": "input_text.wattson_codice_prodotto",
+       "name": "Codice prodotto"
+      },
+      {
+       "entity": "input_text.wattson_stato",
+       "name": "Profilo"
+      },
+      {
+       "entity": "input_button.wattson_dai_nome",
+       "name": "Modifica profilo"
+      }
+     ]
+    },
+    {
+     "type": "markdown",
+     "title": "Catalogo condiviso delle impronte",
+     "content": "{% set c = state_attr('sensor.wattson_semaforo','catalogo') or [] %}Impronte misurate davvero da una presa (Profiler o presa fissa), divise per tipo. Niente dati della casa: solo tipo, marca, modello, codice prodotto, profilo, potenza e durata. **Gradino** = il salto che Wattson vede sul contatore generale, per riconoscerlo; **Consumo** e **kWh/ciclo** = quanto consuma davvero, misurato dalla presa. Possono essere diversi: un deumidificatore accende prima la ventola (35 W, troppo poca per il generale) e poi il compressore (+170 W), quindi gradino 170 W ma consumo 210 W.\n\nSi condividono tra i vari Wattson attraverso il repository pubblico [wattson-catalog](https://github.com/tlabcustomaudio/wattson-catalog).\n\n{% if c %}{% for t, g in c | groupby('type') %}### {{ t }}\n| Marca | Modello | Codice | Profilo | Gradino kW | Consumo W | kWh/ciclo | min | case |\n|---|---|---|---|---:|---:|---:|---:|---:|\n{% for e in g %}| {{ e.brand or '—' }} | {{ e.model or '—' }} | {{ e.code or '—' }} | {{ e.profile or '—' }} | {{ e.kw if e.kw else '—' }} | {{ e.avg_w or '—' }} | {{ e.kwh or '—' }} | {{ (e.min | round(0) | int) if e.min else '—' }} | {{ e.homes if e.homes else 'solo tua' }} |\n{% endfor %}\n{% endfor %}{% else %}Catalogo vuoto: impara un apparecchio con la presa Profiler, o compila i dati di una presa fissa in Impara.{% endif %}{% set dv = state_attr('sensor.wattson_semaforo','da_verificare') or [] %}{% if dv %}\n\n### Da verificare con il Profiler\nStimate dal solo contatore generale: nessuna presa le ha misurate (anche consumi di prima che ci fosse la presa). Non vanno nel catalogo condiviso finché non le rifai con la presa Profiler.\n\n| Nome | Stanza | kW | min | kWh |\n|---|---|---:|---:|---:|\n{% for e in dv %}| {{ e.nome }} | {{ e.stanza or '—' }} | {{ e.kw }} | {{ (e.min or 0) | round(0) | int }} | {{ e.kwh or '—' }} |\n{% endfor %}{% endif %}"
+    }
+   ]
+  }
+ ]
+}

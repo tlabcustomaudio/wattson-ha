@@ -1,0 +1,18 @@
+{
+  "ha_url": "http://homeassistant.local:8123",
+  "token_file": "~/.config/wattson/token",
+  "power_entity": "sensor.<contatore_generale>_power",
+  "limit_kw": 3.0,
+  "tolerance_kw": 3.35,
+  "notify_entity": "notify.<tuo_notifier>",
+  "price_eur_kwh": 0.166,
+  "base_skip": {
+    "sensor.<stampante>_print_status": [
+      "running"
+    ]
+  },
+  "watch": {
+    "sensor.<stampante>_print_status": "Stampante"
+  },
+  "profiler": null
+}
