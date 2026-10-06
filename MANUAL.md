@@ -224,6 +224,7 @@ A smart plug you move from one appliance to another. **You don't switch anything
 The result appears on the dashboard and as an alert: duration, kWh, peak and the fingerprints found. From then on Wattson recognises that appliance **even without the plug**.
 
 > 💡 Same appliance, different modes? Do one session per mode, changing only **Profilo** (e.g. *ABS print*, then *PLA print*).
+> 💡 Left an appliance on the Profiler **without** a session? Wattson still sees its cycles, but it does not name them after the **Nome device** field (that field may still hold the last appliance you profiled). They stay unnamed and Wattson asks you what they are. To measure it properly, start a session.
 > 💡 Below 0.15 kW there's no step to spot on the main meter, so Wattson can't recognise the appliance without the plug — but the measured profile still lands in "I miei profili" and the shared catalog (as "measured, no main-meter step"), same as anything else genuinely measured with a plug.
 
 ### 6.3 Fixed plugs: programs learned automatically

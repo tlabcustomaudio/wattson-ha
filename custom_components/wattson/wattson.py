@@ -661,12 +661,12 @@ def find_profiler(subs):
     return next((e for e, (n, _) in sorted(subs.items()) if n.strip().lower() == PROFILER_NAME), None)
 
 
-def fp_name_from(sub, profiler, typed):
-    """Nome per un'impronta misurata dal sotto-contatore sub. La presa "profiler"
-    non dà il suo nome ma quello dell'apparecchio attaccato (typed; vuoto = nessuno)."""
+def fp_name_from(sub, profiler, dev):
+    """Nome per un'impronta misurata dal sotto-contatore sub. La presa "profiler" non dà il suo nome ma quello
+    dell'apparecchio della sessione in corso (dev). Fuori sessione nessuno: il campo Apparecchio resta scritto
+    dall'ultima prova (un asciugacapelli) e battezzerebbe tutto quello che si attacca dopo (il deumidificatore)."""
     if sub is not None and sub == profiler:
-        typed = (typed or "").strip()
-        return None if typed in ("", "unknown", "unavailable") else typed
+        return (dev or "").strip() or None
     return sub
 
 
@@ -1280,11 +1280,7 @@ def run(dry, cfg=None):
                     sub = on_names.pop(ev["t"], None)
                     prof = subs.get(cfg["profiler"], (None,))[0]
                     if sub and sub == prof:
-                        try:
-                            typed = ha.http("/api/states/" + UI["nome"])["state"]
-                        except Exception:
-                            typed = None
-                        sub = fp_name_from(sub, prof, typed)
+                        sub = fp_name_from(sub, prof, (st.get("psess") or {}).get("dev"))
                     clues = on_clues.pop(ev["t"], None)
                     if clues is not None and env and ev["min"] >= 10:   # sotto i 10 min una stanza non si muove
                         try:
