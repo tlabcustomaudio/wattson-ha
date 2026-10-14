@@ -2952,11 +2952,12 @@ def area_parents(parents, quadro, sub_area):
 
 
 def rest_line(rows, p, name):
-    """Linea senza pinza = generale − linee in cima. Le prese fuori dalle linee stanno per forza lì."""
+    """Linea senza pinza = generale − linee in cima. Ci finiscono solo le prese della stanza col suo nome:
+    una presa senza stanza può stare su qualsiasi linea, resta tra i dispositivi."""
     for r in rows:
-        if not r["linea"] and not r["dentro"]:
+        if not r["linea"] and not r["dentro"] and norm(r["stanza"]) == norm(name):
             r["dentro"] = name
-    w = round(p - sum(r["w"] for r in rows if r["linea"] and not r["dentro"]))
+    w = max(0, round(p - sum(r["w"] for r in rows if r["linea"] and not r["dentro"])))   # pinze sfasate di qualche W
     rows.append({"nome": name, "w": w, "dentro": None, "stanza": None, "linea": True,
                  "resto_w": w - sum(r["w"] for r in rows if r["dentro"] == name)})
 
