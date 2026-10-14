@@ -8,7 +8,7 @@
    "cards": [
     {
      "type": "markdown",
-     "content": "{% set s = states('sensor.wattson_semaforo') %}\n## {{ {'go':'🟢 Via libera','wait':'🟡 Aspetta','stop':'🔴 Spegni qualcosa'}.get(s, '⚪ Wattson non risponde') }}\n{{ state_attr('sensor.wattson_semaforo','consiglio') or '' }}\n{% set su = state_attr('sensor.wattson_semaforo','sole') %}{% if su %}\n**{{ su.consiglio }}**\n{% endif %}{% set a = state_attr('sensor.wattson_semaforo','accesi') or [] %}\n{% if a %}\n**Acceso adesso**\n{% for x in a %}- {{ x.cosa }}: {{ x.kw }} kW dalle {{ x.da }}\n{% endfor %}{% endif %}"
+     "content": "{% set s = states('sensor.wattson_semaforo') %}\n<ha-alert alert-type=\"{{ {'go':'success','wait':'warning','stop':'error'}.get(s, 'info') }}\">{{ state_attr('sensor.wattson_semaforo','consiglio') or 'Wattson non risponde' }}</ha-alert>\n{% set su = state_attr('sensor.wattson_semaforo','sole') %}{% if su %}\n**{{ su.consiglio }}**\n{% endif %}{% set a = state_attr('sensor.wattson_semaforo','accesi') or [] %}\n{% if a %}\n**Acceso adesso**\n{% for x in a %}- {{ x.cosa }}: {{ x.kw }} kW dalle {{ x.da }}\n{% endfor %}{% endif %}"
     },
     {
      "type": "gauge",

@@ -1613,13 +1613,15 @@ def ensure_view(dash, view):
 
 
 def refresh_cards(dash, view):
-    """Le card markdown del modello con lo stesso titolo prendono il testo nuovo (aggiornamenti di Wattson)."""
-    new = {c["title"]: c["content"] for c in view.get("cards", []) if c.get("type") == "markdown" and c.get("title")}
+    """Le card markdown del modello prendono il testo nuovo (aggiornamenti di Wattson): si riconoscono dal titolo,
+    o dalla prima riga se non ne hanno."""
+    key = lambda c: c.get("title") or c.get("content", "").split("\n", 1)[0]
+    new = {key(c): c["content"] for c in view.get("cards", []) if c.get("type") == "markdown"}
     for v in dash["views"]:
         if v.get("path") == view["path"]:
             for c in v.get("cards", []):
-                if c.get("type") == "markdown" and c.get("title") in new:
-                    c["content"] = new[c["title"]]
+                if c.get("type") == "markdown" and key(c) in new:
+                    c["content"] = new[key(c)]
 
 
 def ensure_helpers(ha, ws):
@@ -2659,8 +2661,10 @@ def prog_learn(progs, done):
     seen = next((p for p in progs if done["t"] in p.get("seen", [])), None)
     if seen:
         return seen
-    same = [p for p in progs if not p.get("state") and abs(done["min"] - p["min"]) <= max(3, PROG_TOL * p["min"])
-            and abs(done["kwh"] - p["kwh"]) <= max(0.03, PROG_TOL_KWH * p["kwh"])]
+    def near(p, k, tol, floor):     # un programma unito (es. Auto) copre tutto il suo intervallo visto
+        lo, hi = p.get(k + "_lo", p[k]), p.get(k + "_hi", p[k])
+        return lo - max(floor, tol * lo) <= done[k] <= hi + max(floor, tol * hi)
+    same = [p for p in progs if not p.get("state") and near(p, "min", PROG_TOL, 3) and near(p, "kwh", PROG_TOL_KWH, 0.03)]
     p = min(same, key=lambda p: abs(done["kwh"] - p["kwh"]) / p["kwh"], default=None)
     if p is None:
         p = {"id": next_pid(progs), "name": None, "min": done["min"], "kwh": done["kwh"],
@@ -2671,7 +2675,32 @@ def prog_learn(progs, done):
         p[k] = round((p[k] * n + done[k]) / (n + 1), r) if n else done[k]
     p["peak"] = int(p["peak"])
     p["n"], p["seen"] = n + 1, (p["seen"] + [done["t"]])[-10:]
+    for k in ("min", "kwh") if "min_lo" in p else ():
+        p[k + "_lo"], p[k + "_hi"] = min(p[k + "_lo"], done[k]), max(p[k + "_hi"], done[k])
     return p
+
+
+def prog_merge(progs, name):
+    """Programmi della stessa presa con lo stesso nome = uno solo (programmi adattivi tipo "Auto": durata ed
+    energia cambiano col carico). Tiene il più visto, medie pesate, intervallo visto. Ritorna gli id uniti."""
+    same = sorted((p for p in progs if not p.get("state") and (p.get("name") or "").strip().lower() == name.strip().lower()
+                   and "min" in p), key=lambda p: -p.get("n", 0))
+    if len(same) < 2:
+        return []
+    for p in same:
+        p.setdefault("n", 1)
+    keep, n = same[0], sum(p["n"] for p in same) or 1
+    keep["name"] = name
+    for k in ("min", "kwh"):
+        keep[k + "_lo"] = min(p.get(k + "_lo", p[k]) for p in same)
+        keep[k + "_hi"] = max(p.get(k + "_hi", p[k]) for p in same)
+        keep[k] = round(sum(p[k] * p["n"] for p in same) / n, 1 if k == "min" else 3)
+    keep["peak"] = max(p.get("peak", 0) for p in same)
+    keep["seen"] = sorted(t for p in same for t in p.get("seen", []))[-10:]
+    keep["n"] = sum(p["n"] for p in same)
+    for p in same[1:]:
+        progs.remove(p)
+    return [p["id"] for p in same[1:]]
 
 
 def dur(minutes):
@@ -2723,11 +2752,15 @@ def plug_save(plugs, progs, name, cat, choice):
     plugs[name] = {k: cat[k] for k in CAT_FIELDS[:4]}
     for q in progs.get(name, []):
         q.pop("sent_n", None)       # dati cambiati: si rimanda
+    merged = []
     if p:
         p["name"] = cat["profile"]
-    return "✅ %s: %s%s." % (name, " · ".join(plugs[name].values()),
-                            T(". %s ora si chiama \"%s\"") % (p["id"], p["name"]) if p else
-                            T(". I programmi arrivano da soli, uno per tipo di ciclo: poi li chiami qui"))
+        merged = prog_merge(progs[name], p["name"])
+        p = next((q for q in progs[name] if q.get("name") == p["name"] and q["id"] not in merged), p)
+    return "✅ %s: %s%s%s." % (name, " · ".join(plugs[name].values()),
+                              T(". %s ora si chiama \"%s\"") % (p["id"], p["name"]) if p else
+                              T(". I programmi arrivano da soli, uno per tipo di ciclo: poi li chiami qui"),
+                              T(" (unito a %s: stesso nome)") % ", ".join(merged) if merged else "")
 
 
 def prog_entries(plugs, progs, levels=None):
