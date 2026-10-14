@@ -47,7 +47,7 @@
     {
      "type": "markdown",
      "title": "Cosa ha imparato",
-     "content": "{% set b = state_attr('sensor.wattson_semaforo','carico_base_w') %}\n**Carico di base notturno:** {{ (b ~ ' W') if b else 'in misura, serve una notte (02–05)' }}\n\n{% set f = state_attr('sensor.wattson_semaforo','impronte') or [] %}\n{% if f %}**Impronte imparate**\n{% for x in f %}- **{{ x.nome or ('senza nome · ' ~ x.id) }}**: +{{ x.kw }} kW per {{ x.min }} min, vista {{ x.n }} volte\n{% endfor %}<sub>Senza nome? Daglielo in *Impara*.</sub>{% else %}Nessuna impronta ancora: Wattson impara i carichi sopra 0,3 kW man mano che li vede accendersi e spegnersi.{% endif %}"
+     "content": "{% set mo = state_attr('sensor.wattson_semaforo','mese') %}{% if mo %}**Questo mese:** {{ mo.kwh }} kWh · **{{ mo.eur }} €**{% if mo.proiezione_eur %} · a fine mese ~{{ mo.proiezione_eur }} €{% endif %}{% if mo.budget_eur %} (budget {{ mo.budget_eur }} €{% if mo.proiezione_eur and mo.proiezione_eur > mo.budget_eur %} ⚠️{% endif %}){% endif %}\n\n{% endif %}{% set b = state_attr('sensor.wattson_semaforo','carico_base_w') %}\n**Carico di base notturno:** {{ (b ~ ' W') if b else 'in misura, serve una notte (02–05)' }}\n\n{% set f = state_attr('sensor.wattson_semaforo','impronte') or [] %}\n{% if f %}**Impronte imparate**\n{% for x in f %}- **{{ x.nome or ('senza nome · ' ~ x.id) }}**: +{{ x.kw }} kW per {{ x.min }} min, vista {{ x.n }} volte\n{% endfor %}<sub>Senza nome? Daglielo in *Impara*.</sub>{% else %}Nessuna impronta ancora: Wattson impara i carichi sopra 0,3 kW man mano che li vede accendersi e spegnersi.{% endif %}"
     }
    ]
   },

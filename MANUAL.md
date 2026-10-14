@@ -532,6 +532,7 @@ To see what Wattson is doing: `journalctl --user -u wattson -f`.
 | `big_load_kw` | 1.5 | yellow when less than this is left |
 | `notify_entity` | none | where alerts go |
 | `price_eur_kwh` | 0.25 | cost of 1 kWh, for € figures |
+| `budget_eur_month` | `null` | monthly budget in €: the dashboard shows this month's spend and the month-end projection (always), and you get one message a month when the projection goes over the budget |
 | `battery_level_entity` | none | **Solar homes.** Battery charge, % |
 | `battery_power_entity` | none | **Solar homes.** Battery power, **positive when discharging** (Sungrow) |
 | `battery_charge_positive` | false | `true` if your battery power is positive when **charging** instead |

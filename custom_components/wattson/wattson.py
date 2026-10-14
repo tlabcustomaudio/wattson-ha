@@ -81,6 +81,7 @@ DEFAULTS = {
     "big_load_kw": 1.5,      # "carico pesante" per il semaforo
     "notify_entity": None,   # es. notify.mobile_app_telefono (None = niente notifiche)
     "price_eur_kwh": 0.25,   # tutto compreso, finché non c'è la bolletta
+    "budget_eur_month": None,  # spesa al mese da non superare: avviso (una volta al mese) se la proiezione la supera
     "poll_s": 5,
     # notti da non usare per il carico di base: {entity_id: [stati "occupato"]}
     "base_skip": {},
@@ -961,6 +962,7 @@ def run(dry, cfg=None):
     plug_on, plug_opts, plugs, progs = False, None, jload("plugs.json", {}), prog_fix_ids(jload("programs.json", {}))
     prog_opts, runs_saved = None, 0
     where, ctx, where_on, wopts = jload("where.json", {}), ([], {}, {}, {}, {}, set()), False, {}
+    month, mixed = None, set()     # mixed: linee con prese dentro (tanti apparecchi: niente programmi)
     env, on_clues = {}, {}      # sensori di umidità/temperatura per stanza; indizi di ogni gradino acceso
     tgq, tg_on = queue.Queue(), False     # Telegram a due vie: risposte dal bot di HA
     if not dry:
@@ -1234,6 +1236,11 @@ def run(dry, cfg=None):
         for e, (name, _) in subs.items():      # cicli delle prese fisse → programmi
             if e == cfg["profiler"]:
                 continue
+            if name in mixed:
+                if progs.pop(name, None) is not None:
+                    jsave("programs.json", progs)
+                runs.pop(name, None)
+                continue
             w = measured.get(name)
             runs[name], done = run_feed(runs.get(name), w, now, idle.get(name))
             if w is not None and runs[name] is None:
@@ -1340,12 +1347,25 @@ def run(dry, cfg=None):
                     ha.notify(done)
             prof = subs.get(cfg["profiler"], (None,))[0]
             night_and_base(ha, cfg, st, now, p, {k: w for k, w in measured.items() if k != prof})
+            if month is None or now - st.get("month_at", 0) >= 3600:       # spesa del mese: ogni ora basta
+                st["month_at"], month = now, month_spend(st, now, cfg["price_eur_kwh"], cfg["budget_eur_month"])
+                mk = datetime.fromtimestamp(now).strftime("%Y-%m")
+                if (month["budget_eur"] and month["proiezione_eur"] and month["proiezione_eur"] > month["budget_eur"]
+                        and datetime.fromtimestamp(now).day >= 5 and st.get("budget_told") != mk):
+                    st["budget_told"] = mk
+                    ha.notify(T("💶 Questo mese: %s € finora, a questo ritmo ~%d € a fine mese (budget %d €).") % (
+                        it(month["eur"]), month["proiezione_eur"], month["budget_eur"]))
+                jsave("state.json", st)
             d = datetime.fromtimestamp(now)
             if d.weekday() == DIGEST_DAY and d.hour >= DIGEST_HOUR and st.get("digest_day") != str(d.date()):
                 st["digest_day"] = str(d.date())
                 try:
-                    kwh = sum(band_kwh(read_samples(now - 7 * 86400)).values())
-                    text, ask = digest(st, fps, kwh, cfg["price_eur_kwh"], st["bases"])
+                    two = read_samples(now - 14 * 86400)
+                    week = [x for x in two if x[0] >= now - 7 * 86400]
+                    kwh = sum(band_kwh(week).values())
+                    prev = sum(band_kwh([x for x in two if x[0] < now - 7 * 86400]).values()) if two and two[0][0] < now - 13 * 86400 else None
+                    text, ask = digest(st, fps, kwh, cfg["price_eur_kwh"], st["bases"], prev,
+                                       max((w for _, w in week), default=None), cfg["tolerance_kw"])
                     for q in [q for q, a in st.get("asks", {}).items() if a["kind"] == "name"]:
                         ask_close(st, q)          # le domande vecchie: chiedo di nuovo solo le impronte che pesano
                     ha.notify(text)
@@ -1406,6 +1426,7 @@ def run(dry, cfg=None):
             rest = cfg["rest_line"] or (T("Resto del quadro") if quadro else None)
             if rest:
                 rest_line(rows, p, rest)
+            mixed = {r["dentro"] for r in rows if r["dentro"]}
             try:
                 ha.publish(state, {"friendly_name": T("Wattson semaforo"), "icon": "mdi:traffic-light",
                                    "consiglio": advice, "potenza_kw": round(fl["net"] / 1000, 3),
@@ -1415,6 +1436,7 @@ def run(dry, cfg=None):
                                    "fv_kw": None if fl["pv"] is None else round(fl["pv"] / 1000, 3),
                                    "sole": sun,     # None senza fotovoltaico
                                    "carico_base_w": st["bases"][-1]["w"] if st["bases"] else None,
+                                   "mese": month,
                                    "misurati": rows,     # annidati: ogni presa conta una volta sola
                                    "non_misurato_w": None if rest else round(p - top),
                                    "osservati": [{"nome": n, "stato": s_[0]} for n, s_ in
@@ -1434,6 +1456,32 @@ def run(dry, cfg=None):
             except Exception as e:
                 print("publish fallito:", e, flush=True)
         STOP.wait(cfg["poll_s"])
+
+
+def month_spend(st, now, price, budget, day_kwh=None):
+    """Spesa del mese: kWh e € finora, proiezione a fine mese al ritmo di oggi. I giorni chiusi si calcolano
+    una volta sola (st["day_kwh"]); day_kwh(giorno) → kWh, iniettabile per i test."""
+    day_kwh = day_kwh or (lambda d: sum(band_kwh(read_samples_day(d)).values()))
+    today = datetime.fromtimestamp(now).date()
+    first = today.replace(day=1)
+    cache = {k: v for k, v in st.get("day_kwh", {}).items() if k >= str(first)}
+    d = first
+    while d < today:
+        if str(d) not in cache:
+            cache[str(d)] = round(day_kwh(d), 3)
+        d += timedelta(days=1)
+    st["day_kwh"] = cache
+    kwh = sum(cache.values()) + day_kwh(today)
+    days = (now - datetime.combine(first, datetime.min.time()).timestamp()) / 86400
+    month_days = ((first + timedelta(days=32)).replace(day=1) - first).days
+    proj = kwh / days * month_days if days >= 1 else None
+    return {"kwh": round(kwh, 1), "eur": round(kwh * price, 2), "proiezione_eur": None if proj is None else round(proj * price),
+            "budget_eur": budget}
+
+
+def read_samples_day(d):
+    t0 = datetime.combine(d, datetime.min.time()).timestamp()
+    return [x for x in read_samples(t0) if x[0] < t0 + 86400]
 
 
 def night_and_base(ha, cfg, st, now, p, plugs=None):
@@ -1502,7 +1550,7 @@ def base_text(bases):
     return s + "."
 
 
-def digest(st, fps, kwh, price, bases):
+def digest(st, fps, kwh, price, bases, prev_kwh=None, peak_w=None, tol_kw=None):
     """Riepilogo della settimana: (testo, impronte senza nome da chiedere). Energia per impronta = quella
     accumulata dall'ultimo riepilogo (dal primo avvio, la prima volta). Sotto DIGEST_MIN_KWH non si chiede."""
     first, snap = "digest_wh" not in st, st.get("digest_wh", {})
@@ -1515,6 +1563,11 @@ def digest(st, fps, kwh, price, bases):
     unknown = sorted((f for f in fps if not f["name"] and week[f["id"]] >= DIGEST_MIN_KWH), key=lambda f: -week[f["id"]])
     lines = [T("📊 La settimana di Wattson: %s kWh (%s €), %s kWh al giorno.") % (
         it(kwh, 1), it(kwh * price), it(kwh / 7, 1))]
+    if prev_kwh and prev_kwh >= 1:
+        lines.append(T("Rispetto alla settimana prima: %+d %%.") % round((kwh / prev_kwh - 1) * 100))
+    if peak_w and tol_kw:
+        lines.append(T("⚡ Picco: %s kW (il contatore stacca oltre %s kW).%s") % (
+            it(peak_w / 1000), it(tol_kw), T(" Ci sei andato vicino.") if peak_w >= tol_kw * 1000 - 300 else ""))
     lines += [base_text(bases)] if bases else []
     if named:
         lines.append(T("Riconosciuti %s:") % (T("finora") if first else T("in settimana")))
