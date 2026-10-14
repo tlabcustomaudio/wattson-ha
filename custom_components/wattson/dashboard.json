@@ -26,7 +26,7 @@
     {
      "type": "markdown",
      "title": "Dove va la corrente",
-     "content": "{% set m = state_attr('sensor.wattson_semaforo','misurati') or [] %}{% for x in m if not x.dentro %}- {{ x.nome }}: **{{ x.w }} W**{% if x.stanza %} · {{ x.stanza }}{% endif %}{% if x.resto_w is number %} (senza presa: {{ x.resto_w }} W){% endif %}\n{% for y in m if y.dentro == x.nome %}    - {{ y.nome }}: **{{ y.w }} W**{% if y.resto_w is number %} (senza presa: {{ y.resto_w }} W){% endif %}\n{% for z in m if z.dentro == y.nome %}        - {{ z.nome }}: **{{ z.w }} W**\n{% endfor %}{% endfor %}{% endfor %}- Non misurato: **{{ state_attr('sensor.wattson_semaforo','non_misurato_w') }} W**\n\n<sub>Ogni presa o misuratore che aggiungi in HA entra qui da solo, entro un'ora. Una presa dentro una linea conta una volta sola: indicala in Impara → 📍 Dove sta.</sub>"
+     "content": "{% set m = state_attr('sensor.wattson_semaforo','misurati') or [] %}{% macro row(x, ind) %}{{ ind }}- {{ x.nome }}: **{{ x.w }} W**{% if x.stanza %} · {{ x.stanza }}{% endif %}{% if x.resto_w is number %} (senza presa: {{ x.resto_w }} W){% endif %}\n{% for y in m if y.dentro == x.nome %}{{ row(y, ind ~ '    ') }}{% endfor %}{% endmacro %}{% if m | selectattr('linea') | list %}**⚡ Linee del quadro**\n\n{% for x in m if x.linea and not x.dentro %}{{ row(x, '') }}{% endfor %}\n{% endif %}{% set d = m | rejectattr('linea') | rejectattr('dentro') | list %}{% if d %}**🔌 Dispositivi**\n\n{% for x in d %}{{ row(x, '') }}{% endfor %}{% endif %}{% set u = state_attr('sensor.wattson_semaforo','non_misurato_w') %}{% if u is number %}- Non misurato: **{{ u }} W**{% endif %}\n\n<sub>Ogni presa o misuratore che aggiungi in HA entra qui da solo, entro un'ora. Un misuratore a più canali (es. EM06P) va tra le linee. Una presa dentro una linea conta una volta sola: indicala in Impara → 📍 Dove sta.</sub>"
     },
     {
      "type": "markdown",
@@ -68,7 +68,7 @@
       },
       {
        "type": "markdown",
-       "content": "**Il più comodo:** non spegni niente.\n\n*Prima volta:* collega una smart plug con misura e **rinominala `Profiler`** in HA.\n\n1. Compila la scheda qui sotto (tutto obbligatorio).\n2. Premi **Inizia profilo**, attacca l'apparecchio alla Profiler e accendilo.\n3. Lascia finire il ciclo, poi **Fine profilo** (o stacca la presa)."
+       "content": "**Il più comodo:** non spegni niente.\n\n*Prima volta:* collega una smart plug con misura e **rinominala `Profiler`** in HA.\n\n1. Compila la scheda qui sotto (basta il nome: il resto serve solo al catalogo condiviso).\n2. Premi **Inizia profilo**, attacca l'apparecchio alla Profiler e accendilo.\n3. Lascia finire il ciclo, poi **Fine profilo** (o stacca la presa)."
       },
       {
        "type": "entities",

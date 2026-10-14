@@ -205,7 +205,7 @@ A smart plug you move from one appliance to another. **You don't switch anything
 
 **Every appliance:** go to **Impara** → *Impara con la presa Profiler* (*Learn with the Profiler plug*).
 
-1. Fill in **all** fields. They are all required: the shared catalog is only as good as the data in it.
+1. Fill in the fields. Only **Nome device** is needed to measure. The others are needed to **share** the profile: an incomplete one stays in your own catalog, because the shared catalog is only as good as the data in it.
 
    | Field | English | Example |
    |---|---|---|
@@ -219,7 +219,7 @@ A smart plug you move from one appliance to another. **You don't switch anything
 2. Press **Inizia profilo** (*Start profile*).
 3. Plug the appliance into the Profiler plug (better if still off), then switch it on.
 4. Let it run a **full cycle**, even hours.
-5. Press **Fine profilo** (*Stop profile*), or simply **unplug the Profiler**: after 2 minutes Wattson closes by itself. It also closes after 8 hours if you forget.
+5. Press **Fine profilo** (*Stop profile*), or simply **unplug the Profiler**: after 2 minutes Wattson closes by itself. It also closes 8 hours after the appliance switched on, if you forget; until it switches on, the session waits (so you can start it now and let someone switch the appliance on later).
 
 The result appears on the dashboard and as an alert: duration, kWh, peak and the fingerprints found. From then on Wattson recognises that appliance **even without the plug**.
 
@@ -542,6 +542,7 @@ To see what Wattson is doing: `journalctl --user -u wattson -f`.
 | `watch` | `{}` | devices without metering to watch, `{"sensor.printer_status": "Printer"}`: their state changes help name fingerprints |
 | `base_skip` | `{}` | nights not to use for the base load, `{"sensor.printer_status": ["printing"]}`: a printer printing all night would spoil the average |
 | `submeters_exclude` | `[]` | power sensors to ignore |
+| `rest_line` | `null` | name of the panel line(s) without a clamp (e.g. "Kitchen"): total − measured lines. As soon as Wattson finds a line (multi-channel meter like EM06P/Shelly EM, or a wireless breaker/DIN meter) the rest is shown anyway, as "Rest of the panel". Plugs not inside a line go inside it; a plug goes inside the line named like its HA area by itself |
 | `profiler` | automatic | the Profiler plug sensor. Leave it out: the plug called *Profiler* is found by itself |
 | `catalog_share` | false | send measured fingerprints to the shared catalog |
 | `dashboard` | `wattson` | dashboard address in HA |

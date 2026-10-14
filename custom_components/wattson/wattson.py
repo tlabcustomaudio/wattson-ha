@@ -85,6 +85,8 @@ DEFAULTS = {
     # notti da non usare per il carico di base: {entity_id: [stati "occupato"]}
     "base_skip": {},
     "submeters_exclude": [],   # sensori di potenza da ignorare
+    # linea senza pinza calcolata per differenza (generale − linee misurate), es. "Cucina"; None = "Non misurato"
+    "rest_line": None,
     # presa con misura che si sposta da un apparecchio all'altro per imparare le impronte:
     # il nome non è il suo ma quello scritto in "Wattson apparecchio" (input_text.wattson_apparecchio)
     "profiler": None,
@@ -106,6 +108,7 @@ STEP_W = 150          # gradino minimo riconosciuto (a contatore calmo)
 NOISE_WIN, NOISE_K = 40, 3   # soglia = max(STEP_W, K × rumore degli ultimi WIN campioni ≈ 10 min)
 HOLD_N = 3            # campioni sopra metà soglia che confermano un gradino al limite (compressore da ~140 W)
 MATCH_TOL = 0.25      # spegnimento accoppiato se |Δoff| entro ±25% di Δon
+OFF_W = 3             # presa sotto 3 W = apparecchio spento
 FP_TOL = 0.15         # stessa impronta se potenza entro ±15%
 BASE_ALERT_W = 60     # avviso se il carico di base sale di almeno tanto
 BASE_PLUG_W = 5       # una presa che di notte consuma almeno tanto più di prima è nominata nell'avviso
@@ -251,8 +254,11 @@ class Detector:
         room = max(0, max(self.level, statistics.median(self.win)) - self.floor)
         over = sum(o.get("left", o["w"]) for o in self.open) - room
         ev = []
-        while over > STEP_W and self.open:
+        while self.open:
             o = max(self.open, key=lambda o: o["t"])    # l'ultimo acceso: spesso un impulso, non il carico lungo
+            # un gradino piccolo (~120 W, sotto STEP_W) si chiude anche se l'eccesso è sotto STEP_W
+            if over <= min(STEP_W, 0.5 * o.get("left", o["w"])):
+                break
             cut = min(over, o.get("left", o["w"]))
             o["left"] = o.get("left", o["w"]) - cut
             over -= cut
@@ -314,12 +320,22 @@ def room_clues(states, ent_area, t, before=60, after=20):
     return sorted(out)
 
 
-def env_sensors(states, ent_area):
-    """Sensori di umidità e temperatura di ogni stanza: {stanza: {"humidity": [...], "temperature": [...]}}."""
+# un dispositivo con uno di questi è un apparecchio (stampante, AMS, forno, NAS, presa): le sue temperature e
+# umidità sono interne, non della stanza. Il sensore d'ambiente ha solo misure (+ batteria, segnale, impostazioni).
+APPLIANCE_DC = {("sensor", c) for c in ("duration", "enum", "data_size", "data_rate", "power", "energy", "current")} | {
+    ("binary_sensor", c) for c in ("running", "problem")}
+
+
+def env_sensors(states, ent_area, ent_dev=None):
+    """Sensori di umidità e temperatura di ogni stanza: {stanza: {"humidity": [...], "temperature": [...]}}.
+    Esclusi quelli di un apparecchio (ent_dev: {entity_id: device_id})."""
+    ent_dev = ent_dev or {}
+    appl = {ent_dev.get(s["entity_id"]) for s in states
+            if (s["entity_id"].split(".")[0], s.get("attributes", {}).get("device_class")) in APPLIANCE_DC} - {None}
     out = {}
     for s in states:
         dc, area = s.get("attributes", {}).get("device_class"), ent_area.get(s["entity_id"])
-        if area and dc in TREND and s["entity_id"].startswith("sensor."):
+        if area and dc in TREND and s["entity_id"].startswith("sensor.") and ent_dev.get(s["entity_id"]) not in appl:
             out.setdefault(area, {}).setdefault(dc, []).append(s["entity_id"])
     return out
 
@@ -539,6 +555,15 @@ def learn(fps, cyc, name=None, clues=None, areas=None, plugs=()):
 def fp_wh(fp):
     """Energia di un'impronta finora; le impronte di prima che si contasse: potenza × durata media × volte."""
     return fp.get("wh", round(fp["w"] * (fp["min"] or 0) / 60 * fp["n"]))
+
+
+def open_label(fps, o, minutes, clues, areas, off):
+    """Cosa è un gradino ancora acceso. Mai un apparecchio che la sua presa vede spento (off: nomi a ~0 W),
+    mai uno che dura molto più del suo solito; se non si sa, "carico da x kW"."""
+    fps = [f for f in fps if not (f["name"] and any(of_plug(f, n) for n in off))]
+    fp = match_fp(fps, o["w"], minutes, clues, areas) or next(
+        (f for f in fps if abs(o["w"] - f["w"]) <= FP_TOL * f["w"] and (not f["min"] or minutes <= f["min"] * 2.5)), None)
+    return label(fp, o["w"])
 
 
 def label(fp, w):
@@ -933,9 +958,9 @@ def run(dry, cfg=None):
     last_upd = None
     subs, subs_at, hist, on_names, on_hints = {}, 0, {}, {}, {}
     ui_on, prof_on, ui_seen, job, ui_msg, ui_opts = False, False, {}, None, None, None
-    plug_on, plug_opts, plugs, progs = False, None, jload("plugs.json", {}), jload("programs.json", {})
+    plug_on, plug_opts, plugs, progs = False, None, jload("plugs.json", {}), prog_fix_ids(jload("programs.json", {}))
     prog_opts, runs_saved = None, 0
-    where, ctx, where_on, wopts = jload("where.json", {}), ([], {}, {}, {}), False, {}
+    where, ctx, where_on, wopts = jload("where.json", {}), ([], {}, {}, {}, {}, set()), False, {}
     env, on_clues = {}, {}      # sensori di umidità/temperatura per stanza; indizi di ogni gradino acceso
     tgq, tg_on = queue.Queue(), False     # Telegram a due vie: risposte dal bot di HA
     if not dry:
@@ -978,7 +1003,7 @@ def run(dry, cfg=None):
                 print("discovery fallita:", e, flush=True)
             try:
                 ctx = ha_context(WS(cfg["ha_url"], ha.token), subs)   # stanze e linee a monte, da HA
-                env = env_sensors(ha.http("/api/states"), ctx[3])
+                env = env_sensors(ha.http("/api/states"), ctx[3], ctx[4])
             except Exception as e:
                 print("stanze di HA non lette:", e, flush=True)
             try:
@@ -1335,8 +1360,10 @@ def run(dry, cfg=None):
                 jsave("state.json", st)
             state, advice = light(fl["net"], cfg, st["light"], det.open, fps, now)   # contatore: solo prelievo
             areas = {f["id"]: where_get(where, "fp:" + f["id"], f["name"]).get("area") for f in fps}
-            active = [{"cosa": label(match_fp(fps, o["w"], (now - o["t"]) / 60, on_clues.get(o["t"]), areas) or
-                                     next((f for f in fps if abs(o["w"] - f["w"]) <= FP_TOL * f["w"]), None), o["w"]),
+            off = {n for n, w in measured.items() if w is not None and w < OFF_W}
+            if st.get("psess") and prof in off:
+                off.add(st["psess"]["dev"])     # sulla presa profiler c'è l'apparecchio del profilo
+            active = [{"cosa": open_label(fps, o, (now - o["t"]) / 60, on_clues.get(o["t"]), areas, off),
                        "kw": round(o["w"] / 1000, 2), "da": fmt_t(o["t"])} for o in det.open]
             if state != st["light"]:
                 if state == "stop":
@@ -1371,9 +1398,14 @@ def run(dry, cfg=None):
                 sun = {"stato": ss["state"], "consiglio": sun_advice(ss["state"], fl, cfg, loads),
                        "batteria_pct": fl["soc"],
                        "batteria_kw": None if fl["bat"] is None else round(fl["bat"] / 1000, 2)}
-            top, rows = meter_tree(measured, where_parents(where, ctx[2]))
+            quadro = line_names(subs, ctx[4], ctx[5])
+            top, rows = meter_tree(measured, area_parents(where_parents(where, ctx[2]), quadro, ctx[1]))
             for r in rows:
                 r["stanza"] = (where.get("plug:" + r["nome"]) or {}).get("area") or ctx[1].get(r["nome"])
+                r["linea"] = r["nome"] in quadro or any(x["dentro"] == r["nome"] for x in rows)
+            rest = cfg["rest_line"] or (T("Resto del quadro") if quadro else None)
+            if rest:
+                rest_line(rows, p, rest)
             try:
                 ha.publish(state, {"friendly_name": T("Wattson semaforo"), "icon": "mdi:traffic-light",
                                    "consiglio": advice, "potenza_kw": round(fl["net"] / 1000, 3),
@@ -1384,7 +1416,7 @@ def run(dry, cfg=None):
                                    "sole": sun,     # None senza fotovoltaico
                                    "carico_base_w": st["bases"][-1]["w"] if st["bases"] else None,
                                    "misurati": rows,     # annidati: ogni presa conta una volta sola
-                                   "non_misurato_w": round(p - top),
+                                   "non_misurato_w": None if rest else round(p - top),
                                    "osservati": [{"nome": n, "stato": s_[0]} for n, s_ in
                                                  ((cfg["watch"][e], v) for e, v in watch_cache.items())],
                                    "profili": jload("profiles.json", {}),
@@ -1525,6 +1557,16 @@ def ensure_view(dash, view):
     """Aggiunge una vista del modello se manca (per path); non tocca quelle esistenti."""
     if not any(v.get("path") == view["path"] for v in dash["views"]):
         dash["views"].append(view)
+
+
+def refresh_cards(dash, view):
+    """Le card markdown del modello con lo stesso titolo prendono il testo nuovo (aggiornamenti di Wattson)."""
+    new = {c["title"]: c["content"] for c in view.get("cards", []) if c.get("type") == "markdown" and c.get("title")}
+    for v in dash["views"]:
+        if v.get("path") == view["path"]:
+            for c in v.get("cards", []):
+                if c.get("type") == "markdown" and c.get("title") in new:
+                    c["content"] = new[c["title"]]
 
 
 def ensure_helpers(ha, ws):
@@ -1670,6 +1712,7 @@ def dashboard(cfg, force):
         with open(os.path.join(os.path.dirname(os.path.realpath(__file__)), "dashboard.json")) as f:
             for v in fill_dashboard(json.load(f), cfg["power_entity"], unit, cfg, logo)["views"]:
                 ensure_view(dash, v)
+                refresh_cards(dash, v)
     else:
         with open(os.path.join(os.path.dirname(os.path.realpath(__file__)), "dashboard.json")) as f:
             dash, what = fill_dashboard(json.load(f), cfg["power_entity"], unit, cfg, logo), T("dashboard creata")
@@ -1848,9 +1891,8 @@ def psess_start(st, dev, profiler, now, cat=None):
     if not profiler:
         return (T("❌ Non trovo la presa Profiler. Collega una smart plug con misura dei consumi, aggiungila a Home "
                 "Assistant e rinominala \"Profiler\", poi premi di nuovo Inizia profilo."))
-    missing = ([] if dev else [T("Nome device")]) + [CAT_LABELS[k] for k in CAT_FIELDS if not (cat or {}).get(k)]
-    if missing:   # tutti obbligatori: il catalogo condiviso vale quanto i dati che ci entrano
-        return T("❌ Compila tutti i campi prima di iniziare. Mancano: %s.") % ", ".join(missing)
+    if not dev:   # per misurare basta il nome; i campi del catalogo servono solo a condividere (vedi psess_stop)
+        return T("❌ Compila tutti i campi prima di iniziare. Mancano: %s.") % T("Nome device")
     if st.get("psess"):
         return T("❌ C'è già un profilo in corso: %s. Premi Fine profilo.") % st["psess"]["dev"]
     os.makedirs(DATA, exist_ok=True)
@@ -1872,7 +1914,11 @@ def psess_feed(st, w, now):
     ps["gone"] = None
     with open(psess_file(), "a") as f:
         f.write("%d,%.1f\n" % (now, w))
-    return now - ps["t0"] > PSESS_MAX
+    if w >= OFF_W and not ps.get("on"):
+        ps["on"] = now      # le 8 ore partono quando l'apparecchio si accende, non all'Inizia profilo
+        jsave("state.json", st)
+    # ponytail: mai acceso = la sessione aspetta per sempre; si chiude con Fine profilo o staccando la presa
+    return bool(ps.get("on")) and now - ps["on"] > PSESS_MAX
 
 
 def psess_stop(st, fps, now, cat=None, share=False):
@@ -1895,11 +1941,14 @@ def psess_stop(st, fps, now, cat=None, share=False):
     tag = " · ".join(v for v in (cat or {}).values() if v)
     msg = "✅ %s%s: %s. %s." % (ps["dev"], " (%s)" % tag if tag else "", info, save_profile(fps, ps["dev"], prof, found, cat,
                                                                           round(plug[0][1]) if plug[0][1] >= STEP_W else None))
-    if cat and cat.get("type"):
+    missing = [CAT_LABELS[k] for k in CAT_FIELDS if not cat.get(k)]
+    if cat.get("type"):
         names = {f["name"] for f in found} or {ps["dev"]}
         catalog_save(catalog_merge(catalog_load(), fps, install_id(), datetime.fromtimestamp(now).date().isoformat()))
         c = contribution(fps, names)
-        if share and c:
+        if missing:   # il catalogo condiviso vale quanto i dati che ci entrano: incompleto resta in casa
+            msg += T(" Per il catalogo condiviso mancano: %s.") % ", ".join(missing)
+        elif share and c:
             jsave("outbox.json", jload("outbox.json", []) + [c])
             for f in fps:
                 if f["name"] in names:
@@ -2537,6 +2586,20 @@ def plug_levels(st):
     return {n: {"IDLE": idle.get(n), "ON": on.get(n)} for n in set(idle) | set(on)}
 
 
+def next_pid(progs):
+    """P<n> mai usato: contare i programmi ridava un id già preso dopo che uno era stato tolto."""
+    return "P%d" % (max([int(q["id"][1:]) for q in progs if q["id"][1:].isdigit()], default=0) + 1)
+
+
+def prog_fix_ids(progs):
+    """Ripara gli id doppi lasciati dal vecchio conteggio: il primo dei doppioni prende un id nuovo."""
+    for ps in progs.values():
+        for i, q in enumerate(ps):
+            if any(r["id"] == q["id"] for r in ps[i + 1:]):
+                q["id"] = next_pid(ps)
+    return progs
+
+
 def prog_learn(progs, done):
     """Mette un ciclo nel suo programma (o in uno nuovo). Ritorna il programma. Un ciclo già imparato (stesso
     istante di partenza: ricostruito dallo storico e poi chiuso anche dal vivo) non si conta due volte."""
@@ -2547,7 +2610,7 @@ def prog_learn(progs, done):
             and abs(done["kwh"] - p["kwh"]) <= max(0.03, PROG_TOL_KWH * p["kwh"])]
     p = min(same, key=lambda p: abs(done["kwh"] - p["kwh"]) / p["kwh"], default=None)
     if p is None:
-        p = {"id": "P%d" % (sum(not q.get("state") for q in progs) + 1), "name": None, "min": done["min"], "kwh": done["kwh"],
+        p = {"id": next_pid(progs), "name": None, "min": done["min"], "kwh": done["kwh"],
              "peak": done["peak"], "n": 0, "seen": []}
         progs.append(p)
     n = p["n"]
@@ -2772,6 +2835,46 @@ def meter_tree(measured, parents):
                  for n, w in sorted(measured.items(), key=lambda x: -x[1])]
 
 
+# dispositivi da quadro (differenziali/interruttori wireless, misuratori a pinza o su barra DIN), da marca/modello/nome
+PANEL_RE = re.compile(r"breaker|rcbo|\brcd|\bmcb|differenzial|salvavita|magnetotermic|din.?rail|clamp|pinza"
+                      r"|\bem\d|\d?em\b|\bpro ?\d?em")
+
+
+def line_names(subs, devs, panel=()):
+    """Linee del quadro: canali di un misuratore a più canali (EM06P, Shelly EM…: un dispositivo, più potenze)
+    e i misuratori da quadro (panel: entity_id riconosciuti da PANEL_RE)."""
+    per = {}
+    for e, (n, _) in subs.items():
+        if devs.get(e):
+            per.setdefault(devs[e], []).append(n)
+    return {n for ns in per.values() if len(ns) > 1 for n in ns} | {subs[e][0] for e in panel if e in subs}
+
+
+def norm(s):
+    return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+
+def area_parents(parents, quadro, sub_area):
+    """Presa senza linea scelta → la linea che si chiama come la sua stanza ("Garage Officina" ↔
+    "Garage/Officina"). Quelle scelte a mano o dalla dashboard Energia restano."""
+    by = {norm(n): n for n in quadro}
+    out = dict(parents)
+    for n, a in sub_area.items():
+        if n not in quadro and not out.get(n) and by.get(norm(a)):
+            out[n] = by[norm(a)]
+    return out
+
+
+def rest_line(rows, p, name):
+    """Linea senza pinza = generale − linee in cima. Le prese fuori dalle linee stanno per forza lì."""
+    for r in rows:
+        if not r["linea"] and not r["dentro"]:
+            r["dentro"] = name
+    w = round(p - sum(r["w"] for r in rows if r["linea"] and not r["dentro"]))
+    rows.append({"nome": name, "w": w, "dentro": None, "stanza": None, "linea": True,
+                 "resto_w": w - sum(r["w"] for r in rows if r["dentro"] == name)})
+
+
 def where_parents(where, ha_parents):
     """Linea a monte di ogni presa: quella scelta in "Dove sta?" vince (anche "sul generale"), se no quella di HA."""
     out = dict(ha_parents)
@@ -2856,7 +2959,9 @@ def ha_context(ws, subs):
         if c and p and c != p:
             parents[c] = p
     return (sorted(areas.values()), {n: area(e) for e, (n, _) in subs.items() if area(e)}, parents,
-            {e: area(e) for e in ents if area(e)})
+            {e: area(e) for e in ents if area(e)}, {e: r["device_id"] for e, r in ents.items() if r.get("device_id")},
+            {e for e in subs if PANEL_RE.search(" ".join(str((devs.get((ents.get(e) or {}).get("device_id")) or {}).get(k)
+                                                              or "") for k in ("manufacturer", "model", "name")).lower())})
 
 
 def fp_source(fp):
@@ -2917,7 +3022,11 @@ def profile_edit(fps, progs, plugs, choice, name, cat):
     tutti i programmi di quella presa)."""
     if choice.startswith("prog:"):
         _, plug, pid = choice.split(":", 2)
-        return plug_save(plugs, progs, plug, cat, pid)
+        out = plug_save(plugs, progs, plug, cat, pid)
+        if out.startswith("✅"):     # fp_edit salva da sé; qui si perdeva tutto al riavvio
+            jsave("plugs.json", plugs)
+            jsave("programs.json", progs)
+        return out
     return fp_edit(fps, choice, name, cat)
 
 
