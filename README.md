@@ -4,6 +4,10 @@
 
 *The power detective for Home Assistant.*
 
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/tlabcustom)
+
+If Wattson caught an appliance eating your money, [buy me a coffee](https://buymeacoffee.com/tlabcustom) and fuel the next feature.
+
 Home Assistant already tells you **how much** power you use. Wattson tells you **who** and **when to act**:
 
 - a **traffic light** (`sensor.wattson_semaforo`: go / wait / stop) that warns you before a heavy load trips your meter, and names what is on;
