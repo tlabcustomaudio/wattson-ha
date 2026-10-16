@@ -82,6 +82,9 @@ DEFAULTS = {
     "notify_entity": None,   # es. notify.mobile_app_telefono (None = niente notifiche)
     "price_eur_kwh": 0.25,   # tutto compreso, finché non c'è la bolletta
     "budget_eur_month": None,  # spesa al mese da non superare: avviso (una volta al mese) se la proiezione la supera
+    # coach: prese che Wattson può proporre di spegnere con un pulsante su Telegram (mai da solo):
+    # {"nome apparecchio o presa": "switch.entity"}; vuoto = nessuna azione, solo consigli
+    "coach_switches": {},
     "poll_s": 5,
     # notti da non usare per il carico di base: {entity_id: [stati "occupato"]}
     "base_skip": {},
@@ -104,6 +107,10 @@ DEFAULTS = {
     #  "resident": true, "region": "Lombardia", "comune": "015146"}  (regione e comune ISTAT: offerte locali)
     "bill": None,  # app GitHub "Wattson Catalog" (identificativo pubblico, niente segreti)
 }
+
+COACH_DAY_MAX = 3     # consigli del coach al giorno (gli allarmi del contatore non contano)
+COACH_MUTE_DAYS = 30  # "🔕 Basta": quel tipo di consiglio tace 30 giorni, il doppio a ogni nuovo "basta"
+LONG_RUN_K, LONG_RUN_MIN_N = 3, 10   # "acceso da troppo": oltre 3× il suo solito, impronta vista almeno 10 volte
 
 STEP_W = 150          # gradino minimo riconosciuto (a contatore calmo)
 NOISE_WIN, NOISE_K = 40, 3   # soglia = max(STEP_W, K × rumore degli ultimi WIN campioni ≈ 10 min)
@@ -289,11 +296,39 @@ class Detector:
                  "min": round((t - best["t"]) / 60, 1)}]
 
 
+def fp_fits(fp, w, minutes):
+    """Potenza entro ±FP_TOL e durata entro ×2,5; un'impronta unita (span) vale su tutto l'intervallo dei pezzi."""
+    (wlo, whi), (mlo, mhi) = fp.get("span") or ((fp["w"], fp["w"]), (fp["min"], fp["min"]))
+    return (wlo * (1 - FP_TOL) <= w <= whi * (1 + FP_TOL)
+            and (mlo is None or mlo / 2.5 <= minutes <= mhi * 2.5))
+
+
+def fp_merge(fps, ids):
+    """Unisce le impronte ids nella prima (stesso apparecchio spezzato in più impronte, es. un deumidificatore
+    con cicli brevi e lunghi): somma volte, energia e indizi, media pesata di potenza e durata, e span con
+    l'intervallo dei pezzi così che match_fp riconosca ancora tutti i loro cicli. Ritorna l'impronta unita."""
+    parts = [next(f for f in fps if f["id"] == i) for i in ids]
+    keep, n = parts[0], sum(f["n"] for f in parts)
+    spans = [f.get("span") or ((f["w"], f["w"]), (f["min"], f["min"])) for f in parts if f["min"] is not None]
+    keep.update(span=((min(x[0][0] for x in spans), max(x[0][1] for x in spans)),
+                      (min(x[1][0] for x in spans), max(x[1][1] for x in spans))),
+                w=round(sum(f["w"] * f["n"] for f in parts) / n),
+                min=round(sum((f["min"] or 0) * f["n"] for f in parts) / n, 1),
+                wh=sum(fp_wh(f) for f in parts), n=n, clue_runs=sum(f.get("clue_runs", 0) for f in parts),
+                seen=sorted(t for f in parts for t in f.get("seen", []))[-10:])
+    c = {}
+    for f in parts:
+        for k, v in f.get("clues", {}).items():
+            c[k] = c.get(k, 0) + v
+    keep["clues"] = dict(sorted(c.items(), key=lambda x: -x[1])[:30])
+    fps[:] = [f for f in fps if f is keep or f not in parts]
+    return keep
+
+
 def match_fp(fps, w, minutes, clues=None, areas=None):
     """Impronta di un gradino di w W durato minutes min. Se ne vanno bene più d'una (tre deumidificatori da ~200 W),
     vince quella i cui indizi di stanza somigliano di più a quelli di adesso, poi la più vicina in potenza."""
-    ok = [fp for fp in fps if abs(w - fp["w"]) <= FP_TOL * fp["w"]
-          and (fp["min"] is None or fp["min"] / 2.5 <= minutes <= fp["min"] * 2.5)]
+    ok = [fp for fp in fps if fp_fits(fp, w, minutes)]
     return max(ok, key=lambda fp: (clue_score(fp, clues or [], (areas or {}).get(fp["id"])), -abs(w - fp["w"])),
                default=None)
 
@@ -393,6 +428,76 @@ def room_guess(fp):
     return best[0] if best and best[1] >= ROOM_MIN_RUNS and best[1] >= ROOM_MIN_SHARE * runs else None
 
 
+# --- coach: consigli con un tetto al giorno, e che imparano dalle risposte ----------------------------------
+def coach_ok(st, key, now):
+    """Può partire un consiglio di tipo key? Al massimo COACH_DAY_MAX al giorno, mai un tipo zittito dall'utente."""
+    c = st.setdefault("coach", {})
+    day = datetime.fromtimestamp(now).strftime("%Y-%m-%d")
+    if c.get("day") != day:
+        c.update(day=day, n=0)
+    if c["n"] >= COACH_DAY_MAX or c.get("mute", {}).get(key, 0) > now:
+        return False
+    c["n"] += 1
+    return True
+
+
+def coach_send(ha, st, key, text, now, switch=None):
+    """Consiglio del coach: su Telegram con 👍/🔕 (e ⏻ se c'è una presa autorizzata), altrimenti notifica semplice.
+    Non diventa "l'ultima domanda": una risposta scritta resta per le domande sui nomi e le stanze."""
+    if not coach_ok(st, key, now):
+        print("coach: taccio (%s)" % key, flush=True)
+        return False
+    if not ha.tg:
+        ha.notify(text)
+        return True
+    last = st.get("ask_last")
+    qid = ask_add(st, "coach", None, text, {"key": key, "switch": switch})
+    st["ask_last"] = last
+    ha.ask(text, ([btn(T("⏻ Spegni"), "/w %s off" % qid)] if switch else [])
+           + [btn(T("👍 Utile"), "/w %s y" % qid), btn(T("🔕 Basta per un po'"), "/w %s n" % qid)])
+    return True
+
+
+def coach_answer(st, a, choice, now):
+    """Risposta a un consiglio: 👍 conta, 🔕 zittisce quel tipo (30 giorni, poi 60, 120...), ⏻ chiede di spegnere."""
+    c = st.setdefault("coach", {})
+    k = a["key"]
+    if choice == "off" and a.get("switch"):
+        st["coach_off"] = a["switch"]       # lo esegue il ciclo principale, che ricontrolla che sia autorizzata
+        return T("⏻ Spengo %s.") % a["switch"]
+    if choice == "y":
+        c.setdefault("useful", {})[k] = c.get("useful", {}).get(k, 0) + 1
+        return T("👍 Grazie, questi consigli continuo a darteli.")
+    times = c.setdefault("muted", {}).get(k, 0) + 1
+    c["muted"][k] = times
+    days = COACH_MUTE_DAYS * 2 ** (times - 1)
+    c.setdefault("mute", {})[k] = now + days * 86400
+    return T("🔕 Ok, su questo taccio per %d giorni.") % days
+
+
+def eur_cycle(w, minutes, price):
+    return w / 1000 * (minutes or 0) / 60 * price
+
+
+def long_runs(fps, opens, now):
+    """Apparecchi accesi da molto più del solito (compressore che non stacca, filtro intasato, porta aperta):
+    [(gradino, impronta, minuti)]. Solo se NESSUNA impronta della stessa potenza spiega quella durata (un altro
+    apparecchio da 200 W che fa cicli lunghi) e quella con nome è stata vista abbastanza per sapere il suo solito."""
+    out = []
+    for o in opens:
+        m = (now - o["t"]) / 60
+        same = [f for f in fps if f["w"] and abs(o["w"] - f["w"]) <= FP_TOL * f["w"] and f["min"]]
+        if any(m <= (f.get("span") or (0, (0, f["min"])))[1][1] * 2.5 for f in same):
+            continue
+        named = [f for f in same if f["name"] and f["n"] >= LONG_RUN_MIN_N]
+        if named:
+            fp = max(named, key=lambda f: f["n"])
+            usual = (fp.get("span") or (0, (0, fp["min"])))[1][1]
+            if m >= max(LONG_RUN_K * usual, usual + 30):
+                out.append((o, fp, m))
+    return out
+
+
 # --- Telegram a due vie: domande con pulsanti, oppure risposta scritta (bot di HA, integrazione telegram_bot) ---
 def ask_add(st, kind, fp_id, text, extra=None):
     """Registra una domanda aperta; ritorna il suo id, corto perché sta nei 64 byte di un pulsante di Telegram.
@@ -464,6 +569,11 @@ def tg_handle(st, fps, where, area_names, ev):
     a = st.get("asks", {}).get(qid)
     if not a:
         return T("Questa domanda è già chiusa.")
+    if a["kind"] == "coach":
+        if choice not in ("y", "n", "off"):
+            return T("Rispondi con un pulsante.")
+        ask_close(st, qid)
+        return coach_answer(st, a, choice, time.time())
     if a["kind"] == "line":
         if choice not in ("y", "n"):
             return T("Rispondi con un pulsante, oppure scegli la linea in Impara → 📍 Dove sta.")
@@ -515,13 +625,18 @@ def tg_listen(cfg, token, q):
             STOP.wait(30)
 
 
+def fp_new_id(fps):
+    """max+1, non len+1: dopo una cancellazione len+1 ridava un id gia' in uso."""
+    return "fp%d" % (max([int(f["id"][2:]) for f in fps if f["id"][2:].isdigit()], default=0) + 1)
+
+
 def seed_fp(fps, name, w):
     """Impronta creata a mano (taratura): nome e potenza noti, durata da imparare."""
     for fp in fps:
         if fp["name"] == name:
             fp["w"], fp["manual"] = round(w), True
             return fp
-    fp = {"id": "fp%d" % (len(fps) + 1), "name": name, "w": round(w), "min": None,
+    fp = {"id": fp_new_id(fps), "name": name, "w": round(w), "min": None,
           "n": 1, "seen": [], "manual": True}
     fps.append(fp)
     return fp
@@ -542,7 +657,7 @@ def learn(fps, cyc, name=None, clues=None, areas=None, plugs=()):
         fp["n"] = n + 1
         fp["seen"] = (fp.get("seen", []) + [cyc["t"]])[-10:]
     else:
-        fp = {"id": "fp%d" % (len(fps) + 1), "name": None, "w": cyc["w"], "min": cyc["min"],
+        fp = {"id": fp_new_id(fps), "name": None, "w": cyc["w"], "min": cyc["min"],
               "n": 1, "seen": [cyc["t"]]}
         fps.append(fp)
     fp["wh"] = wh
@@ -832,6 +947,8 @@ def log_event(ev):
 
 
 class HA:
+    tg = False      # Telegram a due vie attivo: i consigli del coach hanno i pulsanti
+
     def __init__(self, cfg, dry):
         self.cfg, self.dry = cfg, dry
         self.token = cfg.get("token") or open(os.path.expanduser(cfg["token_file"])).read().strip()
@@ -972,6 +1089,7 @@ def run(dry, cfg=None):
             print("servizi di HA non letti:", e, flush=True)
         if tg_on:
             threading.Thread(target=tg_listen, args=(cfg, ha.token, tgq), daemon=True).start()
+    ha.tg = tg_on
     auto_prof = not cfg["profiler"]      # in config vince; se no, la presa che si chiama "Profiler"
     print("Wattson v0 avviato su", cfg["power_entity"], flush=True)
     while not STOP.is_set():
@@ -1197,6 +1315,11 @@ def run(dry, cfg=None):
                 parts = ((ev.get("data") or {}).get("data") or "").split()
                 q = st.get("asks", {}).get(parts[1] if len(parts) == 3 else st.get("ask_last"), {}).get("text")
                 out = tg_handle(st, fps, where, ctx[0], ev)
+                sw = st.pop("coach_off", None)
+                if sw and sw in cfg["coach_switches"].values():      # solo prese autorizzate, e solo su richiesta
+                    ha.http("/api/services/switch/turn_off", {"entity_id": sw})
+                elif sw:
+                    out = T("❌ %s non è tra le prese che posso spegnere (coach_switches).") % sw
                 if out:
                     ha.tg_reply(ev, out, q)
                     jsave("fingerprints.json", fps)
@@ -1337,8 +1460,8 @@ def run(dry, cfg=None):
                     named = hint_name(fp, on_hints.pop(ev["t"], None))
                     if named and fp["name"] is None:
                         fp["name"] = named      # stato che coincide per la 2a volta
-                        ha.notify(T("Ho riconosciuto un carico: %s ≈ %s kW per circa %d min.") % (
-                            named, it(fp["w"] / 1000, 1), round(fp["min"])))
+                        coach_send(ha, st, "named", T("Ho riconosciuto un carico: %s ≈ %s kW per circa %d min (≈ %s € a ciclo).") % (
+                            named, it(fp["w"] / 1000, 1), round(fp["min"]), it(eur_cycle(fp["w"], fp["min"], cfg["price_eur_kwh"]))), now)
                     jsave("fingerprints.json", fps)
             if job:
                 done = ui_job(job, fps, now, progs, plugs)
@@ -1353,8 +1476,8 @@ def run(dry, cfg=None):
                 if (month["budget_eur"] and month["proiezione_eur"] and month["proiezione_eur"] > month["budget_eur"]
                         and datetime.fromtimestamp(now).day >= 5 and st.get("budget_told") != mk):
                     st["budget_told"] = mk
-                    ha.notify(T("💶 Questo mese: %s € finora, a questo ritmo ~%d € a fine mese (budget %d €).") % (
-                        it(month["eur"]), month["proiezione_eur"], month["budget_eur"]))
+                    coach_send(ha, st, "budget", T("💶 Questo mese: %s € finora, a questo ritmo ~%d € a fine mese (budget %d €).") % (
+                        it(month["eur"]), month["proiezione_eur"], month["budget_eur"]), now)
                 jsave("state.json", st)
             d = datetime.fromtimestamp(now)
             if d.weekday() == DIGEST_DAY and d.hour >= DIGEST_HOUR and st.get("digest_day") != str(d.date()):
@@ -1385,6 +1508,16 @@ def run(dry, cfg=None):
                 off.add(st["psess"]["dev"])     # sulla presa profiler c'è l'apparecchio del profilo
             active = [{"cosa": open_label(fps, o, (now - o["t"]) / 60, on_clues.get(o["t"]), areas, off),
                        "kw": round(o["w"] / 1000, 2), "da": fmt_t(o["t"])} for o in det.open]
+            told = st.setdefault("long_told", [])
+            for o, f, m in long_runs(fps, det.open, now):
+                if o["t"] not in told:          # una volta per accensione
+                    st["long_told"] = told = (told + [o["t"]])[-20:]
+                    usual = (f.get("span") or (0, (0, f["min"])))[1][1]
+                    coach_send(ha, st, "long:" + f["name"], T("⏱️ %s è acceso da %d min, di solito al massimo %d. Finora ≈ %s €. "
+                                                             "Se non è normale: filtro, porta o termostato?") % (
+                        f["name"], m, round(usual), it(eur_cycle(o["w"], m, cfg["price_eur_kwh"]))), now,
+                        cfg["coach_switches"].get(f["name"]))
+                    jsave("state.json", st)
             if state != st["light"]:
                 if state == "stop":
                     lines = [T("⚡ %s kW alle %s (limite %s kW)") % (it(fl["net"] / 1000), fmt_t(now), it(cfg["tolerance_kw"]))]
@@ -1517,10 +1650,10 @@ def night_and_base(ha, cfg, st, now, p, plugs=None):
         if len(prev) >= 3:
             ref = statistics.median(b["w"] for b in prev)
             if base - ref >= BASE_ALERT_W:
-                ha.notify(T("Carico di base stanotte: %d W, di solito %d W (+%d W ≈ %d €/anno se resta). "
-                          "Qualcosa è rimasto acceso?") % (base, ref, base - ref,
-                                                          eur_year(base - ref, cfg["price_eur_kwh"]))
-                          + base_why(prev, pl))
+                coach_send(ha, st, "base", T("Carico di base stanotte: %d W, di solito %d W (+%d W ≈ %d €/anno se resta). "
+                                           "Qualcosa è rimasto acceso?") % (base, ref, base - ref,
+                                                                           eur_year(base - ref, cfg["price_eur_kwh"]))
+                           + base_why(prev, pl), now)
     elif d.hour >= 5:
         st["night"] = []
 
@@ -1794,6 +1927,17 @@ def main(argv):
                 print("ok:", fp["id"], "=", fp["name"])
                 return
         sys.exit("impronta non trovata: " + argv[1])
+    if argv[:1] == ["merge"] and len(argv) >= 3:     # merge fp4 fp12 ...: tutte nella prima
+        fps, st = jload("fingerprints.json", []), jload("state.json", {})
+        if not set(argv[1:]) <= {f["id"] for f in fps}:
+            sys.exit("impronta non trovata: " + " ".join(set(argv[1:]) - {f["id"] for f in fps}))
+        snap = st.get("digest_wh", {})     # la foto del riepilogo settimanale si somma come l'energia
+        if snap:
+            snap[argv[1]] = sum(snap.pop(i, 0) for i in argv[1:])
+        fp = fp_merge(fps, argv[1:])
+        jsave("fingerprints.json", fps); jsave("state.json", st)
+        print("ok: %s = %s, %d volte, %d-%d W, %.1f-%.1f min" % (fp["id"], fp["name"], fp["n"], *fp["span"][0], *fp["span"][1]))
+        return
     if argv[:1] == ["learn"]:
         return learn_cli(argv[1:])
     if argv[:1] == ["offerte"]:     # bolletta contro le offerte del Portale Offerte ARERA di oggi
@@ -1907,7 +2051,7 @@ def save_profile(fps, dev, prof, found, cat=None, already_on=None):
         fp = next((x for x in fps if x["name"] == f["name"]), None) or \
             next((x for x in fps if x["name"] is None and x is match_fp(fps, f["w"], f["min"])), None)
         if fp is None:
-            fp = {"id": "fp%d" % (len(fps) + 1), "seen": []}
+            fp = {"id": fp_new_id(fps), "seen": []}
             fps.append(fp)
         fp.update(name=f["name"], w=f["w"], min=f["min"], n=max(fp.get("n", 0), f["n"]), profiler=True,
                   **{k: f[k] for k in CAT_REAL if k in f})
@@ -1921,7 +2065,7 @@ def save_profile(fps, dev, prof, found, cat=None, already_on=None):
     elif prof is not None:
         fp = next((x for x in fps if x["name"] == dev), None)
         if fp is None:
-            fp = {"id": "fp%d" % (len(fps) + 1), "seen": []}
+            fp = {"id": fp_new_id(fps), "seen": []}
             fps.append(fp)
         fp.update(name=dev, w=0, min=0, n=fp.get("n", 0) + 1, profiler=True, kwh=prof["kwh"], avg_w=prof["medio"])
         if cat and cat.get("type"):

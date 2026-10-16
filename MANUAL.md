@@ -533,6 +533,7 @@ To see what Wattson is doing: `journalctl --user -u wattson -f`.
 | `notify_entity` | none | where alerts go |
 | `price_eur_kwh` | 0.25 | cost of 1 kWh, for € figures |
 | `budget_eur_month` | `null` | monthly budget in €: the dashboard shows this month's spend and the month-end projection (always), and you get one message a month when the projection goes over the budget |
+| `coach_switches` | `{}` | plugs Wattson may offer to switch off, as `{"appliance or plug name": "switch.entity_id"}`. Only with a Telegram button you tap, never on its own. Empty = tips only |
 | `battery_level_entity` | none | **Solar homes.** Battery charge, % |
 | `battery_power_entity` | none | **Solar homes.** Battery power, **positive when discharging** (Sungrow) |
 | `battery_charge_positive` | false | `true` if your battery power is positive when **charging** instead |
@@ -609,3 +610,11 @@ Data lives in `~/.local/share/wattson/`: `fingerprints.json`, `programs.json`, `
 | **Baseline** (*bianco*) | the base load measured by hand, with everything switched off |
 | **Profiler** | the roaming metering plug used to teach Wattson |
 | **Fixed plug** (*presa fissa*) | a metering plug that always stays on the same appliance |
+
+## Coach tips
+
+Tips (night base load up, budget, a recognised load with its € per cycle, an appliance running much longer than usual)
+are at most **3 a day**; power-limit alarms are never capped. On Telegram each tip has **👍 Useful** and
+**🔕 Not for a while**: 🔕 silences that kind of tip for 30 days, then 60, 120... each time you press it again.
+"Running much longer than usual" fires only when no fingerprint of the same power explains the duration and the
+appliance has been seen at least 10 times; if it is listed in `coach_switches` the tip also has **⏻ Switch off**.

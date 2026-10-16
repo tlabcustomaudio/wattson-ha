@@ -96,7 +96,6 @@
   "Carico di base stanotte: %d W, di solito %d W (+%d W ≈ %d €/anno se resta). Qualcosa è rimasto acceso?": "Base load tonight: %d W, usually %d W (+%d W ≈ %d €/year if it stays). Was something left on?",
   "Codice prodotto": "Product code",
   "Consumo non stabile: aspetta che il dispositivo sia a regime e riprova.": "Power not steady: wait until the device settles and try again.",
-  "Ho riconosciuto un carico: %s ≈ %s kW per circa %d min.": "I recognised a load: %s ≈ %s kW for about %d min.",
   "Il carico di base (%d W, sempre acceso) costa ~%d €/anno: ogni 10 W in meno sono ~%d €.": "The base load (%d W, always on) costs ~%d €/year: every 10 W less saves ~%d €.",
   "Marca": "Brand",
   "Margine %s kW: aspetta per forno, bollitore o phon.%s": "Margin %s kW: wait before oven, kettle or hair dryer.%s",
@@ -215,6 +214,16 @@
   "Rispetto alla settimana prima: %+d %%.": "Compared with the week before: %+d %%.",
   "⚡ Picco: %s kW (il contatore stacca oltre %s kW).%s": "⚡ Peak: %s kW (the meter trips above %s kW).%s",
   " Ci sei andato vicino.": " You came close.",
-  " (unito a %s: stesso nome)": " (merged with %s: same name)"
+  " (unito a %s: stesso nome)": " (merged with %s: same name)",
+  "⏻ Spegni": "⏻ Switch off",
+  "👍 Utile": "👍 Useful",
+  "🔕 Basta per un po'": "🔕 Not for a while",
+  "⏻ Spengo %s.": "⏻ Switching off %s.",
+  "👍 Grazie, questi consigli continuo a darteli.": "👍 Thanks, I'll keep giving you these tips.",
+  "🔕 Ok, su questo taccio per %d giorni.": "🔕 Ok, I'll keep quiet about this for %d days.",
+  "Rispondi con un pulsante.": "Answer with a button.",
+  "❌ %s non è tra le prese che posso spegnere (coach_switches).": "❌ %s is not one of the plugs I may switch off (coach_switches).",
+  "Ho riconosciuto un carico: %s ≈ %s kW per circa %d min (≈ %s € a ciclo).": "Recognised a load: %s ≈ %s kW for about %d min (≈ %s € per cycle).",
+  "⏱️ %s è acceso da %d min, di solito al massimo %d. Finora ≈ %s €. Se non è normale: filtro, porta o termostato?": "⏱️ %s has been on for %d min, usually %d at most. So far ≈ %s €. If that's not normal: filter, door or thermostat?"
  }
 }
